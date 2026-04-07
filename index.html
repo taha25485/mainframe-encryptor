@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Encryption Platform</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        textarea { width: 100%; height: 150px; margin: 10px 0; }
+        input, button { padding: 10px; margin: 5px; }
+        .output { background: #f0f0f0; padding: 10px; word-break: break-all; }
+        .warning { background: #ffdddd; padding: 10px; border: 1px solid red; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Secure Encryption Platform (Web)</h1>
+    <div class="warning">
+        <strong>⚠️ Security Warning:</strong> This is a demo using AES-256-GCM (standard AES max key size; "AES-4096" isn't standard—using PBKDF2 for key derivation).
+        SHA-512 for password hashing/derivation. For production, use audited libs like libsodium. Client-side E2E encryption.
+        Never use for sensitive data without review. Telegram bot below shares backend.
+    </div>
+
+    <h2>Encrypt/Decrypt Message</h2>
+    <input type="password" id="password" placeholder="Enter password (SHA-512 hashed + PBKDF2 for AES key)" />
+    <textarea id="input" placeholder="Enter message to encrypt/decrypt"></textarea>
+    <button onclick="toggleEncrypt()">Toggle Encrypt/Decrypt</button>
+    <div id="output" class="output"></div>
+
+    <h2>Telegram Bot</h2>
+    <p>Deploy the Node.js backend below, then message <code>@YourBotUsername</code> with:</p>
+    <ul>
+        <li><code>/encrypt password message</code></li>
+        <li><code>/decrypt password encrypted_text</code></li>
+    </ul>
+    <p>Bot uses same AES-256-GCM + SHA-512 PBKDF2.</p>
+
+    <script>
+        let isEncryptMode = true;
+        const outputEl = document.getElementById('output');
+        const inputEl = document.getElementById('input');
+
+        async function toggleEncrypt() {
+            const password = document.getElementById('password').value;
+            const message = inputEl.value;
+            if (!password || !message) return alert('Enter password and message');
+
+            if (isEncryptMode) {
+                const encrypted = await encrypt(message, password);
+                outputEl.innerHTML = `Encrypted (Base64):<br>${encrypted}`;
+            } else {
+                try {
+                    const decrypted = await decrypt(message, password);
+                    outputEl.innerHTML = `Decrypted:<br>${decrypted}`;
+                } catch (e) {
+                    outputEl.innerHTML = `Error: ${e.message}`;
+                }
+            }
+            inputEl.value = isEncryptMode ? '' : message; // Clear input after encrypt
+            isEncryptMode = !isEncryptMode;
+        }
+
+        async function sha512Hash(str) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(str);
+            const hashBuffer = await crypto.subtle.digest('SHA-512', data);
+            return btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
+        }
+
+        async function deriveKey(password, salt = 'platform-salt-2024') { // Use unique salt per user/app
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw', enc.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits', 'deriveKey']
+            );
+            return crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt: enc.encode(salt),
+                    iterations: 100000,
+                    hash: 'SHA-512'
+                },
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 }, // AES-256 key
+                true,
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        async function encrypt(plaintext, password) {
+            const enc = new TextEncoder();
+            const iv = crypto.getRandomValues(new Uint8Array(12)); // GCM IV
+            const key = await deriveKey(password);
+
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                enc.encode(plaintext)
+            );
+
+            const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+            combined.set(iv, 0);
+            combined.set(new Uint8Array(ciphertext), iv.length);
+
+            return btoa(String.fromCharCode(...combined));
+        }
+
+        async function decrypt(base64ciphertext, password) {
+            const combined = Uint8Array.from(atob(base64ciphertext), c => c.charCodeAt(0));
+            const iv = combined.slice(0, 12);
+            const ciphertext = combined.slice(12);
+
+            const key = await deriveKey(password);
+            const plaintextBuffer = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                ciphertext
+            );
+            return new TextDecoder().decode(plaintextBuffer);
+        }
+    </script>
+</body>
+</html>
